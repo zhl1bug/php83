@@ -1,124 +1,103 @@
-FROM php:8.3-fpm
+FROM debian:unstable-slim
 
 LABEL maintainer="inhere <zhanghongli@1bug.com>" version="2.0"
 
-# --build-arg timezone=Asia/Shanghai
 ARG timezone
-# app env: prod pre test dev
-ARG app_env=test
-# default use www-data user
+ARG app_env=prod
 ARG work_user=www-data
 
 # default APP_ENV = test
 ENV APP_ENV=${app_env:-"test"} \
     TIMEZONE=${timezone:-"Asia/Shanghai"}
 
-# 清理旧的源文件
-RUN rm -f /etc/apt/sources.list.d/*
-
-# 设置新的源
-RUN echo "deb https://mirrors.aliyun.com/debian/ bullseye main non-free contrib" > /etc/apt/sources.list \
-    && echo "deb https://mirrors.aliyun.com/debian-security/ bullseye-security main" >> /etc/apt/sources.list \
-    && echo "deb https://mirrors.aliyun.com/debian/ bullseye-updates main non-free contrib" >> /etc/apt/sources.list
-
-# 清理缓存并更新包列表
-RUN apt-get clean \
-    && apt-get update
-
-# 升级系统包
-RUN apt-get dist-upgrade -y
-
-
-
-# 安装基本工具
-RUN apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    unzip \
-    git \
-    zip \
-    openssl
-
-# 安装 libcurl 和 libpq 相关库
-RUN apt-get remove --purge -y libcurl4
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libxml2-dev \
     libcurl4-openssl-dev \
-    libpq-dev
+    libjpeg-dev \
+    libpng-dev \
+    libfreetype6-dev \
+    libwebp-dev \
+    libxpm-dev \
+    libssl-dev \
+    libzip-dev \
+    libonig-dev \
+    libreadline-dev \
+    vim \
+    wget \
+    curl \
+    autoconf \
+    apt-transport-https \
+    ca-certificates \
+    libsqlite3-dev \
+    libxslt1-dev \
+    libgd-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# 安装 SSL 相关库
-RUN apt-get install -y --no-install-recommends \
-    libssl-dev
-
-# 安装 Brotli 库
-RUN apt-get install -y --no-install-recommends --allow-downgrades \
-    libbrotli1=1.0.9-2+b2 \
-    libbrotli-dev
-
-# 安装 Ares 和图像处理库
-RUN apt-get install -y --no-install-recommends \
-    libc-ares-dev
-
-RUN apt-get install -y --no-install-recommends libjpeg-dev
-
-# 检查并移除 zlib1g
-RUN apt-get remove --purge -y zlib1g || true
-
-RUN apt-get install -y --no-install-recommends --allow-downgrades zlib1g=1:1.2.11.dfsg-2+deb11u2
-
-RUN apt-get install -y --no-install-recommends \
-    libpng-dev
-
-RUN apt-get install -y --no-install-recommends \
-    libfreetype6-dev
-
-# 安装特定版本的 zlib1g
-RUN apt-get install -y --no-install-recommends zlib1g-dev
-
-RUN rm -rf /var/lib/apt/lists/*
-
-# 清理 apt 缓存
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install gd
-
-RUN docker-php-ext-install bcmath pdo_mysql mysqli sockets sysvmsg sysvsem sysvshm
+RUN mkdir /d && cd /d && \
+    wget https://www.php.net/distributions/php-8.3.13.tar.gz && \
+    tar -xzf php-8.3.13.tar.gz && \
+    cd php-8.3.13 && \
+    ./configure --with-config-file-path=/usr/local/php \
+                --enable-fpm \
+                --with-pear \
+                --enable-mbstring \
+                --enable-soap \
+                --with-curl \
+                --with-openssl \
+                --enable-intl \
+                --with-mysqli \
+                --with-xsl \
+                --enable-pcntl \
+                --with-bz2 \
+                --enable-sockets \
+                --with-zlib \
+                --enable-sysvsem \
+                --enable-sysvshm \
+                --with-pdo-mysql \
+                --enable-gd \
+                --with-gd --with-jpeg --with-png \
+                --with-fileinfo \
+    && make && make install && \
+    cp php.ini-development /usr/local/php/php.ini
 
 Run php -r "copy('https://install.phpcomposer.com/installer', 'composer-setup.php');" \
     && php composer-setup.php \
     && mv composer.phar /usr/local/bin/composer \
     && composer config -g repo.packagist composer https://packagist.phpcomposer.com
 
+RUN pecl channel-update pecl.php.net
+
 RUN yes '' | pecl install redis \
-    && docker-php-ext-enable redis
+     && echo "extension=redis.so" >> /usr/local/php/php.ini
 
 # Install swoole extension
-RUN pecl install -D 'enable-sockets="no" enable-openssl="yes" enable-http2="yes" enable-mysqlnd="yes" enable-swoole-json="no" enable-swoole-curl="yes" enable-cares="yes" enable-brotli="yes" enable-swoole-pgsql="no" with-swoole-odbc="no" with-swoole-oracle="no" enable-swoole-sqlite="no"' swoole \
-    && docker-php-ext-enable swoole
+RUN yes '' | pecl install swoole \
+    && echo "extension=swoole.so" >> /usr/local/php/php.ini
 
 # Install yaconf extension
-RUN pecl install yaconf \
-    && docker-php-ext-enable yaconf \
-    && echo yaconf.directory="/var/www/yaconf" >> /usr/local/etc/php/conf.d/yaconf.ini \
-    && echo yaconf.check_delay=0 >> /usr/local/etc/php/conf.d/yaconf.ini
+RUN yes '' | pecl install yaconf \
+    && echo "extension=yaconf.so" >> /usr/local/php/php.ini \
+    && echo yaconf.directory="/var/www/yaconf" >> /usr/local/php/php.ini \
+    && echo yaconf.check_delay=0 >> /usr/local/php/php.ini
 
 RUN yes '' | pecl install xlswriter \
-    && docker-php-ext-enable xlswriter
+    && echo "extension=xlswriter.so" >> /usr/local/php/php.ini
 
-# base.ini
-RUN echo file_uploads=On >> /usr/local/etc/php/conf.d/base.ini \
-    && echo memory_limit=2048M >> /usr/local/etc/php/conf.d/base.ini \
-    && echo upload_max_filesize=512M >> /usr/local/etc/php/conf.d/base.ini \
-    && echo post_max_size=512M >> /usr/local/etc/php/conf.d/base.ini \
-    && echo max_execution_time=7200 >> /usr/local/etc/php/conf.d/base.ini
-
-RUN apt-get clean \
-    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false
-
-ADD . /var/www
+RUN echo "[global]" > /usr/local/etc/php-fpm.conf && \
+    echo "error_log = /usr/local/etc/log" >> /usr/local/etc/php-fpm.conf && \
+    echo "[www]" >> /usr/local/etc/php-fpm.conf && \
+    echo "listen = 127.0.0.1:9000" >> /usr/local/etc/php-fpm.conf && \
+    echo "user = www-data" >> /usr/local/etc/php-fpm.conf && \
+    echo "group = www-data" >> /usr/local/etc/php-fpm.conf && \
+    echo "pm = dynamic" >> /usr/local/etc/php-fpm.conf && \
+    echo "pm.max_children = 150" >> /usr/local/etc/php-fpm.conf && \
+    echo "pm.start_servers = 10" >> /usr/local/etc/php-fpm.conf && \
+    echo "pm.min_spare_servers = 10" >> /usr/local/etc/php-fpm.conf && \
+    echo "pm.max_spare_servers = 30" >> /usr/local/etc/php-fpm.conf
 
 WORKDIR /var/www
 EXPOSE 9000
 
-# ENTRYPOINT ["php", "/var/www", "http:start"]
-#CMD ["php", "/var/www", "http:start"]
+CMD ["php-fpm", "-F", "-c", "/usr/local/php/php.ini"]
